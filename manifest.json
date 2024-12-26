@@ -1,0 +1,25 @@
+{
+    "manifest_version": 3,
+    "name": "Bilibili Favlist Classifier",
+    "version": "1.7", 
+    "description": "Classifies Bilibili favlist by tag.",
+    "permissions": [
+      "activeTab",
+      "storage",
+      "cookies",
+      "https://api.bilibili.com/*",
+      "scripting"
+    ],
+    "action": {
+      "default_popup": "popup.html"
+    },
+    "content_scripts": [
+      {
+        "matches": [
+          "https://space.bilibili.com/*" 
+        ],
+        "js": ["content.js"],
+        "run_at": "document_end"
+      }
+    ]
+  }
