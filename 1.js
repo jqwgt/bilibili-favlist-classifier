@@ -17,6 +17,39 @@
         return document.cookie.match(/bili_jct=([^;]+)/)?.[1] || '';
     }
 
+    // 添加日志功能
+    function log(message, type = 'info') {
+        const styles = {
+            info: 'color: #00a1d6',
+            error: 'color: #ff0000',
+            success: 'color: #00ff00'
+        };
+        console.log(`%c[收藏夹分类] ${message}`, styles[type]);
+    }
+
+    // 获取视频详细信息
+    async function getVideoInfo(aid) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `https://api.bilibili.com/x/web-interface/view?aid=${aid}`,
+                responseType: 'json',
+                onload: function(response) {
+                    const data = response.response.data;
+                    log(`获取视频 ${aid} 详细信息:`, 'info');
+                    console.table({
+                        标题: data.title,
+                        分区ID: data.tid,
+                        分区名: data.tname,
+                        播放量: data.stat.view,
+                    });
+                    resolve(data);
+                },
+                onerror: reject
+            });
+        });
+    }
+
     // 获取收藏夹中的视频
     async function getFavVideos(mediaId, ps = 20, pn = 1, videos = []) {
         return new Promise((resolve, reject) => {
@@ -24,12 +57,36 @@
                 method: 'GET',
                 url: `https://api.bilibili.com/x/v3/fav/resource/list?media_id=${mediaId}&pn=${pn}&ps=${ps}&order=mtime&type=0&platform=web`,
                 responseType: 'json',
-                onload: function(response) {
+                onload: async function(response) {
                     const data = response.response.data;
-                    videos = videos.concat(data.medias || []);
+                    log(`收藏夹API返回数据:`, 'info');
+                    console.log(data);
                     
+                    if (!data || !data.medias) {
+                        reject('获取视频列表失败');
+                        return;
+                    }
+
+                    // 获取每个视频的详细信息
+                    for (let video of data.medias) {
+                        try {
+                            const videoInfo = await getVideoInfo(video.id);
+                            videos.push({
+                                aid: video.id,
+                                title: video.title,
+                                tid: videoInfo.tid,
+                                tname: videoInfo.tname,
+                                play: videoInfo.stat.view
+                            });
+                            // 避免请求过快
+                            await new Promise(r => setTimeout(r, 300));
+                        } catch (err) {
+                            log(`获取视频 ${video.id} 信息失败`, 'error');
+                        }
+                    }
+
                     if (data.has_more) {
-                        getFavVideos(mediaId, ps, pn + 1, videos).then(resolve);
+                        await getFavVideos(mediaId, ps, pn + 1, videos).then(resolve);
                     } else {
                         resolve(videos);
                     }
@@ -131,41 +188,120 @@
         });
     }
 
+    // 修改进度显示样式
+    function updateProgress(message, current, total) {
+        const progressDiv = document.getElementById('fav-progress') || createProgressDiv();
+        progressDiv.innerHTML = `
+            <div style="margin-bottom: 5px">${message}</div>
+            <div style="width: 200px; background: #ddd; height: 20px; border-radius: 10px;">
+                <div style="width: ${(current/total)*100}%; background: #00a1d6; height: 100%; border-radius: 10px;"></div>
+            </div>
+            <div style="margin-top: 5px">${current}/${total}</div>
+        `;
+    }
+
+    function createProgressDiv() {
+        const div = document.createElement('div');
+        div.id = 'fav-progress';
+        div.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.9);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            z-index: 10000;
+        `;
+        document.body.appendChild(div);
+        return div;
+    }
+
     // 主处理流程
     async function processClassify() {
         try {
-            // 获取当前收藏夹ID
             const fid = new URL(location.href).searchParams.get('fid');
             if (!fid) throw new Error('未找到收藏夹ID');
-
-            // 获取所有视频
+            
+            log('开始获取收藏夹视频...');
             const videos = await getFavVideos(fid);
             
-            // 按分区分组
+            // 验证视频信息
+            if (!videos.length) {
+                throw new Error('未获取到视频');
+            }
+            
+            log('开始按分区分组...');
             const tidGroups = {};
             videos.forEach(video => {
-                if (!tidGroups[video.tid]) {
-                    tidGroups[video.tid] = [];
+                // 尝试从不同可能的字段获取分区信息
+                const tid = video.tid || video.typeid;
+                const tname = video.tname || video.typename;
+                
+                if (!tid || !tname) {
+                    log(`警告：视频 ${video.title} (aid: ${video.aid}) 缺少分区信息`, 'error');
+                    console.log('完整视频数据:', video);
+                    return;
                 }
-                tidGroups[video.tid].push(video);
+                
+                if (!tidGroups[tid]) {
+                    tidGroups[tid] = [];
+                }
+                tidGroups[tid].push(video);
             });
-
-            // 显示配置界面
+            
+            log('分组结果：');
+            Object.entries(tidGroups).forEach(([tid, videos]) => {
+                log(`分区 ${videos[0].tname}：${videos.length}个视频`);
+            });
+            
             const config = await createConfigUI(tidGroups);
-
-            // 创建新收藏夹并添加视频
+            
+            // 创建进度显示
+            const progressDiv = document.createElement('div');
+            progressDiv.style.cssText = `
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                background: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 10px;
+                border-radius: 4px;
+                z-index: 10000;
+            `;
+            document.body.appendChild(progressDiv);
+            
+            // 执行收藏操作
+            let totalProcessed = 0;
+            const totalVideos = Object.values(tidGroups).reduce((sum, videos) => sum + videos.length, 0);
+            
             for (const [tid, folderName] of Object.entries(config)) {
+                log(`创建收藏夹：${folderName}`);
                 const newFid = await createFolder(folderName);
+                
+                if (!newFid) {
+                    log(`创建收藏夹 ${folderName} 失败`, 'error');
+                    continue;
+                }
+                
                 for (const video of tidGroups[tid]) {
-                    await addToFav(video.aid, newFid);
-                    // 添加延时避免请求过快
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                    try {
+                        await addToFav(video.aid, newFid);
+                        totalProcessed++;
+                        updateProgress(`正在添加视频到 ${folderName}`, totalProcessed, totalVideos);
+                        log(`添加视频：${video.title}`);
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    } catch (error) {
+                        log(`添加视频失败：${video.title}`, 'error');
+                    }
                 }
             }
-
+            
+            progressDiv.remove();
+            log('分类完成！', 'success');
             alert('分类完成！');
         } catch (error) {
-            console.error(error);
+            log(error.message, 'error');
             alert('操作失败：' + error.message);
         }
     }
