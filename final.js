@@ -7,6 +7,7 @@
 // @match        *://space.bilibili.com/*/favlist*
 // @grant        GM_xmlhttpRequest
 // @connect      api.bilibili.com
+// this project use https://github.com/SocialSisterYi/bilibili-API-collect
 // ==/UserScript==
 
 (function() {
@@ -26,7 +27,23 @@
         };
         console.log(`%c[收藏夹分类] ${message}`, styles[type]);
     }
-
+    
+    // 获取用户收藏夹
+    async function getUserFavLists() {
+        const mid = window.location.pathname.split('/')[1];
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: `https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=${mid}`,
+                responseType: 'json',
+                onload: function(response) {
+                    resolve(response.response.data.list || []);
+                },
+                onerror: reject
+            });
+        });
+    }
+        
     // 获取视频详细信息
     async function getVideoInfo(aid) {
         return new Promise((resolve, reject) => {
@@ -61,7 +78,7 @@
                     const data = response.response.data;
                     log(`收藏夹API返回数据:`, 'info');
                     console.log(data);
-                    
+
                     if (!data || !data.medias) {
                         reject('获取视频列表失败');
                         return;
@@ -149,38 +166,127 @@
             z-index: 10000;
             max-height: 80vh;
             overflow-y: auto;
+            width: 600px;
         `;
-
-        let html = '<h3>分区分类配置</h3>';
+    
+        let html = `
+            <h3>分区分类配置</h3>
+            <div style="margin-bottom: 20px">
+                <button id="addCustomGroup">添加自定义分组</button>
+            </div>
+            <div id="customGroups"></div>
+            <div id="defaultGroups">
+                <h4>默认分区分组</h4>
+        `;
+    
         Object.entries(tidGroups).forEach(([tid, videos]) => {
             html += `
-                <div style="margin: 10px 0;">
+                <div style="margin: 10px 0;" class="tid-group" data-tid="${tid}">
                     <input type="text" value="${videos[0].tname}" data-tid="${tid}">
                     <span>(${videos.length}个视频)</span>
                 </div>
             `;
         });
-
+    
         html += `
+            </div>
             <div style="margin-top: 15px">
                 <button id="startClassify">开始分类</button>
                 <button id="cancelClassify">取消</button>
             </div>
         `;
-
+    
         modal.innerHTML = html;
         document.body.appendChild(modal);
-
+    
+        let existingFolders = [];
+        let customGroups = [];
+    
+        // 获取现有收藏夹
+        getUserFavLists().then(folders => {
+            existingFolders = folders;
+        });
+    
+        // 添加自定义分组的处理
+        document.getElementById('addCustomGroup').onclick = async () => {
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'custom-group';
+            groupDiv.style.margin = '10px 0';
+            groupDiv.style.padding = '10px';
+            groupDiv.style.border = '1px solid #ddd';
+    
+            const tidOptions = Object.entries(tidGroups)
+                .map(([tid, videos]) => `
+                    <label style="display: block; margin: 5px 0;">
+                        <input type="checkbox" value="${tid}"> ${videos[0].tname} (${videos.length}个视频)
+                    </label>
+                `).join('');
+    
+            groupDiv.innerHTML = `
+                <div style="margin-bottom: 10px">
+                    <input type="text" placeholder="新收藏夹名称" class="folder-name">
+                    <button class="use-existing">使用现有收藏夹</button>
+                    <button class="remove-group">删除分组</button>
+                </div>
+                <div class="tid-options">
+                    ${tidOptions}
+                </div>
+            `;
+    
+            document.getElementById('customGroups').appendChild(groupDiv);
+    
+            // 使用现有收藏夹按钮处理
+            groupDiv.querySelector('.use-existing').onclick = () => {
+                const select = document.createElement('select');
+                select.innerHTML = `
+                    <option value="">选择现有收藏夹</option>
+                    ${existingFolders.map(f => `<option value="${f.id}">${f.title}</option>`).join('')}
+                `;
+                const input = groupDiv.querySelector('.folder-name');
+                input.parentNode.replaceChild(select, input);
+            };
+    
+            // 删除分组按钮处理
+            groupDiv.querySelector('.remove-group').onclick = () => {
+                groupDiv.remove();
+            };
+        };
+    
         return new Promise((resolve, reject) => {
             document.getElementById('startClassify').onclick = () => {
-                const config = {};
-                modal.querySelectorAll('input[data-tid]').forEach(input => {
-                    config[input.dataset.tid] = input.value;
+                const config = {
+                    custom: [],
+                    default: {}
+                };
+    
+                // 收集自定义分组配置
+                document.querySelectorAll('.custom-group').forEach(group => {
+                    const nameInput = group.querySelector('.folder-name, select');
+                    const selectedTids = Array.from(group.querySelectorAll('input[type="checkbox"]:checked'))
+                        .map(cb => cb.value);
+    
+                    if (selectedTids.length > 0 && nameInput.value) {
+                        config.custom.push({
+                            name: nameInput.value,
+                            isExisting: nameInput.tagName === 'SELECT',
+                            fid: nameInput.tagName === 'SELECT' ? nameInput.value : null,
+                            tids: selectedTids
+                        });
+                    }
                 });
+    
+                // 收集默认分组配置
+                document.querySelectorAll('#defaultGroups input[data-tid]').forEach(input => {
+                    const tid = input.dataset.tid;
+                    if (!config.custom.some(g => g.tids.includes(tid))) {
+                        config.default[tid] = input.value;
+                    }
+                });
+    
                 modal.remove();
                 resolve(config);
             };
-
+    
             document.getElementById('cancelClassify').onclick = () => {
                 modal.remove();
                 reject('用户取消操作');
@@ -219,85 +325,75 @@
 
     // 主处理流程
     async function processClassify() {
+        let totalProcessed = 0;
+        let totalVideos = 0;
+        
         try {
             const fid = new URL(location.href).searchParams.get('fid');
             if (!fid) throw new Error('未找到收藏夹ID');
-            
+
             log('开始获取收藏夹视频...');
             const videos = await getFavVideos(fid);
-            
-            // 验证视频信息
-            if (!videos.length) {
-                throw new Error('未获取到视频');
-            }
-            
-            log('开始按分区分组...');
+            if (!videos.length) throw new Error('未找到视频');
+
+            // 按分区分组视频
             const tidGroups = {};
             videos.forEach(video => {
-                // 尝试从不同可能的字段获取分区信息
-                const tid = video.tid || video.typeid;
-                const tname = video.tname || video.typename;
-                
-                if (!tid || !tname) {
-                    log(`警告：视频 ${video.title} (aid: ${video.aid}) 缺少分区信息`, 'error');
-                    console.log('完整视频数据:', video);
-                    return;
+                if (!tidGroups[video.tid]) {
+                    tidGroups[video.tid] = [];
                 }
-                
-                if (!tidGroups[tid]) {
-                    tidGroups[tid] = [];
-                }
-                tidGroups[tid].push(video);
+                tidGroups[video.tid].push(video);
             });
+
+            totalVideos = videos.length;
             
-            log('分组结果：');
-            Object.entries(tidGroups).forEach(([tid, videos]) => {
-                log(`分区 ${videos[0].tname}：${videos.length}个视频`);
-            });
+            // 获取用户配置
+            const userConfig = await createConfigUI(tidGroups);
             
-            const config = await createConfigUI(tidGroups);
-            
-            // 创建进度显示
-            const progressDiv = document.createElement('div');
-            progressDiv.style.cssText = `
-                position: fixed;
-                top: 10px;
-                right: 10px;
-                background: rgba(0, 0, 0, 0.7);
-                color: white;
-                padding: 10px;
-                border-radius: 4px;
-                z-index: 10000;
-            `;
-            document.body.appendChild(progressDiv);
-            
-            // 执行收藏操作
-            let totalProcessed = 0;
-            const totalVideos = Object.values(tidGroups).reduce((sum, videos) => sum + videos.length, 0);
-            
-            for (const [tid, folderName] of Object.entries(config)) {
-                log(`创建收藏夹：${folderName}`);
-                const newFid = await createFolder(folderName);
-                
-                if (!newFid) {
-                    log(`创建收藏夹 ${folderName} 失败`, 'error');
-                    continue;
+            // 处理自定义分组
+            for (const group of userConfig.custom) {
+                let newFid;
+                if (group.isExisting) {
+                    newFid = group.fid;
+                } else {
+                    // 检查收藏夹名称是否存在
+                    const existingFolders = await getUserFavLists();
+                    let folderName = group.name;
+                    let counter = 1;
+                    
+                    while (existingFolders.some(f => f.title === folderName)) {
+                        folderName = `${group.name}_${counter++}`;
+                        log(`收藏夹名称"${group.name}"已存在，尝试使用"${folderName}"`, 'info');
+                    }
+                    
+                    newFid = await createFolder(folderName);
                 }
-                
-                for (const video of tidGroups[tid]) {
-                    try {
+
+                // 添加选中分区的视频
+                for (const tid of group.tids) {
+                    for (const video of tidGroups[tid]) {
                         await addToFav(video.aid, newFid);
                         totalProcessed++;
-                        updateProgress(`正在添加视频到 ${folderName}`, totalProcessed, totalVideos);
-                        log(`添加视频：${video.title}`);
-                        await new Promise(resolve => setTimeout(resolve, 300));
-                    } catch (error) {
-                        log(`添加视频失败：${video.title}`, 'error');
+                        updateProgress(`正在添加视频到分组"${group.name}"`, totalProcessed, totalVideos);
+                        await new Promise(r => setTimeout(r, 300));
                     }
                 }
             }
-            
-            progressDiv.remove();
+
+            // 处理未分组的视频
+            for (const [tid, folderName] of Object.entries(userConfig.default)) {
+                if (!userConfig.custom.some(g => g.tids.includes(tid))) {
+                    const newFid = await createFolder(folderName);
+                    for (const video of tidGroups[tid]) {
+                        await addToFav(video.aid, newFid);
+                        totalProcessed++;
+                        updateProgress(`正在添加视频到"${folderName}"`, totalProcessed, totalVideos);
+                        await new Promise(r => setTimeout(r, 300));
+                    }
+                }
+            }
+
+            document.getElementById('fav-progress')?.remove();
             log('分类完成！', 'success');
             alert('分类完成！');
         } catch (error) {
