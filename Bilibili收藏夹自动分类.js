@@ -4,7 +4,7 @@
 // @version      1.2
 // @description  B站收藏夹视频自动分类
 // @author       https://space.bilibili.com/1937042029,https://github.com/jqwgt
-// @license      MIT
+// @license      GPL-3.0-or-later
 // @match        *://space.bilibili.com/*/favlist*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
