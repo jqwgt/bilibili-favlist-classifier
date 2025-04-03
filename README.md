@@ -19,7 +19,12 @@
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件。  
 2. 点击 [此处](https://github.com/jqwgt) 获取脚本。  
-3. 在 Tampermonkey 插件内安装脚本。  
+3. 在 Tampermonkey 插件内安装脚本。
+
+您可以通过以下方式安装脚本：  
+- **复制代码** 到 Tampermonkey 的 **“添加新脚本”** 界面并保存。  
+- 直接在 **[Greasyfork](https://greasyfork.org/zh-CN/scripts/531672-bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB)** 安装。  
+- **Edge扩展商店审核通过后**，可直接从商店安装。
 
 ## **使用方法**  
 
