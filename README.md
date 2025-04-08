@@ -15,16 +15,20 @@
 ![配置界面](图片1.png)  
 ![日志](图片2.png)  
 
-## **安装方法**  
+以下是整理好的安装方法：
 
-1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 插件。  
-2. 点击 [此处](https://github.com/jqwgt) 获取脚本。  
-3. 在 Tampermonkey 插件内安装脚本。
+## 安装方法
 
-您可以通过以下方式安装脚本：  
-- **复制代码** 到 Tampermonkey 的 **“添加新脚本”** 界面并保存。  
-- 直接在 **[Greasyfork](https://greasyfork.org/zh-CN/scripts/531672-bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB)** 安装。  
-- **Edge扩展商店审核通过后**，可直接从商店安装。
+1. **安装 Tampermonkey 插件**
+   - 访问 [Tampermonkey 官方网站](https://www.tampermonkey.net/) 并按照提示安装适用于您浏览器的版本。
+
+2. **获取脚本代码**
+   - 方法一：点击 [此处](https://github.com/jqwgt/bilibili-favlist-classifier/blob/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js) 获取脚本代码。
+   - 方法二：访问 [Greasyfork](https://greasyfork.org/zh-CN/scripts/531672-bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB) 页面并直接安装脚本。
+   - 方法三：待 Edge 扩展商店审核通过后，可以从商店直接安装。
+
+3. **在 Tampermonkey 内安装脚本**
+   - 如果您选择了方法一，请将复制的脚本代码粘贴到 Tampermonkey 的“添加新脚本”界面中，然后保存即可。
 
 ## **使用方法**  
 
