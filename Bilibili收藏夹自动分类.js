@@ -222,6 +222,7 @@
     }
 
     // 获取视频详细信息
+    // 获取视频详细信息 增加跳过异常
     async function getVideoInfo(aid) {
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
@@ -229,6 +230,11 @@
                 url: `https://api.bilibili.com/x/web-interface/view?aid=${aid}`,
                 responseType: 'json',
                 onload: function(response) {
+                    if (!response.response.data) {
+                        log(`视频 ${aid} 可能已失效或无法访问，跳过处理`, 'error');
+                        reject(new Error(`视频 ${aid} 可能已失效或无法访问`));
+                        return;
+                    }
                     const data = response.response.data;
                     log(`获取视频 ${aid} 详细信息:`, 'info');
                     console.table({
@@ -239,7 +245,10 @@
                     });
                     resolve(data);
                 },
-                onerror: reject
+                onerror: function(error) {
+                    log(`视频 ${aid} 信息获取失败，跳过处理`, 'error');
+                    reject(error);
+                }
             });
         });
     }
@@ -258,13 +267,15 @@
                     const data = response.response.data;
                     log(`收藏夹API返回数据:`, 'info');
                     console.log(data);
-
+    
                     if (!data || !data.medias) {
                         reject('获取视频列表失败');
                         return;
                     }
-
+    
                     let currentCount = videos.length;
+                    let processedCount = 0;
+                    
                     for (let video of data.medias) {
                         try {
                             const videoInfo = await getVideoInfo(video.id);
@@ -276,13 +287,15 @@
                                 play: videoInfo.stat.view
                             });
                             currentCount++;
-                            updateReadingProgress(`正在读取视频，已获取 ${currentCount} 个视频`);
-                            await new Promise(r => setTimeout(r, 300));
                         } catch (err) {
-                            log(`获取视频 ${video.id} 信息失败`, 'error');
+                            log(`跳过视频 ${video.id}: ${err.message}`, 'error');
+                        } finally {
+                            processedCount++;
+                            updateReadingProgress(`正在读取视频，已获取 ${currentCount} 个视频，处理进度 ${processedCount}/${data.medias.length}`);
+                            await new Promise(r => setTimeout(r, 300));
                         }
                     }
-
+    
                     if (data.has_more) {
                         await getFavVideos(mediaId, ps, pn + 1, videos).then(resolve);
                     } else {
@@ -570,26 +583,27 @@
     }
 
     // 更新进度显示
-    function updateProgress(message, current, total) {
+    function updateProgress(message, current, total, skipped = 0) {
         const progressDiv = document.getElementById('fav-progress') || createProgressDiv();
         progressDiv.querySelector('div:first-child').textContent = message;
         progressDiv.querySelector('.bili-classifier-progress-fill').style.width = `${(current/total)*100}%`;
-        progressDiv.querySelector('div:last-child').textContent = `${current}/${total}`;
+        progressDiv.querySelector('div:last-child').textContent = `${current}/${total}${skipped > 0 ? ` (跳过${skipped}个)` : ''}`;
     }
 
     // 主处理流程
     async function processClassify() {
         let totalProcessed = 0;
         let totalVideos = 0;
+        let skippedVideos = 0;
         const sourceFid = new URL(location.href).searchParams.get('fid');
-
+    
         try {
             if (!sourceFid) throw new Error('未找到收藏夹ID');
-
+    
             log('开始获取收藏夹视频...');
             const videos = await getFavVideos(sourceFid);
             if (!videos.length) throw new Error('未找到视频');
-
+    
             // 按分区分组视频
             const tidGroups = {};
             videos.forEach(video => {
@@ -598,12 +612,12 @@
                 }
                 tidGroups[video.tid].push(video);
             });
-
+    
             totalVideos = videos.length;
-
+    
             // 获取用户配置
             const userConfig = await createConfigUI(tidGroups);
-
+    
             // 处理自定义分组
             for (const group of userConfig.custom) {
                 let targetFid;
@@ -614,50 +628,60 @@
                     const existingFolders = await getUserFavLists();
                     let folderName = group.name;
                     let counter = 1;
-
+    
                     while (existingFolders.some(f => f.title === folderName)) {
                         folderName = `${group.name}_${counter++}`;
                         log(`收藏夹名称"${group.name}"已存在，尝试使用"${folderName}"`, 'info');
                     }
-
+    
                     targetFid = await createFolder(folderName);
                 }
-
+    
                 // 添加选中分区的视频
                 for (const tid of group.tids) {
                     for (const video of tidGroups[tid]) {
-                        await addToFav(video.aid, targetFid);
-                        if (userConfig.operationMode === 'move') {
-                            await removeFromFav(video.aid, sourceFid);
+                        try {
+                            await addToFav(video.aid, targetFid);
+                            if (userConfig.operationMode === 'move') {
+                                await removeFromFav(video.aid, sourceFid);
+                            }
+                            totalProcessed++;
+                        } catch (error) {
+                            log(`处理视频 ${video.aid} 失败: ${error.message}，已跳过`, 'error');
+                            skippedVideos++;
                         }
-                        totalProcessed++;
-                        updateProgress(`正在处理视频到分组"${group.name}"`, totalProcessed, totalVideos);
+                        updateProgress(`正在处理视频到分组"${group.name}"`, totalProcessed, totalVideos, skippedVideos);
                         await new Promise(r => setTimeout(r, 300));
                     }
                 }
             }
-
+    
             // 处理未分组的视频（仅在用户选择自动分类时）
             if (userConfig.autoClassifyUnassigned) {
                 for (const [tid, folderName] of Object.entries(userConfig.default)) {
                     if (!userConfig.custom.some(g => g.tids.includes(tid))) {
                         const targetFid = await createFolder(folderName);
                         for (const video of tidGroups[tid]) {
-                            await addToFav(video.aid, targetFid);
-                            if (userConfig.operationMode === 'move') {
-                                await removeFromFav(video.aid, sourceFid);
+                            try {
+                                await addToFav(video.aid, targetFid);
+                                if (userConfig.operationMode === 'move') {
+                                    await removeFromFav(video.aid, sourceFid);
+                                }
+                                totalProcessed++;
+                            } catch (error) {
+                                log(`处理视频 ${video.aid} 失败: ${error.message}，已跳过`, 'error');
+                                skippedVideos++;
                             }
-                            totalProcessed++;
-                            updateProgress(`正在处理视频到"${folderName}"`, totalProcessed, totalVideos);
+                            updateProgress(`正在处理视频到"${folderName}"`, totalProcessed, totalVideos, skippedVideos);
                             await new Promise(r => setTimeout(r, 300));
                         }
                     }
                 }
             }
-
+    
             document.getElementById('fav-progress')?.remove();
-            log('分类完成！', 'success');
-            alert('分类完成！');
+            log(`分类完成！处理了 ${totalProcessed} 个视频，跳过了 ${skippedVideos} 个视频`, 'success');
+            alert(`分类完成！处理了 ${totalProcessed} 个视频，跳过了 ${skippedVideos} 个视频`);
         } catch (error) {
             log(error.message, 'error');
             alert('操作失败：' + error.message);
