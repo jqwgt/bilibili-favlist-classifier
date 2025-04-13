@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili收藏夹自动分类
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  B站收藏夹视频自动分类
 // @author       https://space.bilibili.com/1937042029,https://github.com/jqwgt
 // @license      GPL-3.0-or-later
