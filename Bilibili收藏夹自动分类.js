@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili收藏夹自动分类
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.2
 // @description  B站收藏夹视频自动分类
 // @author       https://space.bilibili.com/1937042029,https://github.com/jqwgt
 // @license      GPL-3.0-or-later
@@ -660,19 +660,22 @@
             if (userConfig.autoClassifyUnassigned) {
                 for (const [tid, folderName] of Object.entries(userConfig.default)) {
                     if (!userConfig.custom.some(g => g.tids.includes(tid))) {
-                        const targetFid = await createFolder(folderName);
+                        // 添加重名检测
+                        const existingFolders = await getUserFavLists();
+                        let folderNameToUse = folderName;
+                        let counter = 1;
+                        while (existingFolders.some(f => f.title === folderNameToUse)) {
+                            folderNameToUse = `${folderName}_${counter++}`;
+                            log(`收藏夹名称"${folderName}"已存在，尝试使用"${folderNameToUse}"`, 'info');
+                        }
+                        const targetFid = await createFolder(folderNameToUse);
                         for (const video of tidGroups[tid]) {
-                            try {
-                                await addToFav(video.aid, targetFid);
-                                if (userConfig.operationMode === 'move') {
-                                    await removeFromFav(video.aid, sourceFid);
-                                }
-                                totalProcessed++;
-                            } catch (error) {
-                                log(`处理视频 ${video.aid} 失败: ${error.message}，已跳过`, 'error');
-                                skippedVideos++;
+                            await addToFav(video.aid, targetFid);
+                            if (userConfig.operationMode === 'move') {
+                                await removeFromFav(video.aid, sourceFid);
                             }
-                            updateProgress(`正在处理视频到"${folderName}"`, totalProcessed, totalVideos, skippedVideos);
+                            totalProcessed++;
+                            updateProgress(`正在处理视频到"${folderNameToUse}"`, totalProcessed, totalVideos);
                             await new Promise(r => setTimeout(r, 300));
                         }
                     }
