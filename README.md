@@ -1,5 +1,5 @@
 ### **Bilibili收藏夹自动分类**  
-
+![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)
 ## **简介**  
 
 这是一个用于自动分类B站收藏夹视频的Tampermonkey脚本。该脚本会根据视频的分区自动将视频分类到不同的收藏夹中，并在页面右侧显示读取视频的进度。  
@@ -51,8 +51,11 @@
 ## **开发者**  
 
 - [我的 GitHub](https://github.com/jqwgt)  
-- [我的 B站空间](https://space.bilibili.com/1937042029)  
+- [我的 B站空间](https://space.bilibili.com/1937042029)
+  
+## Star History
 
+[![Star History Chart](https://api.star-history.com/svg?repos=jqwgt/bilibili-favlist-classifier&type=Date)](https://www.star-history.com/#jqwgt/bilibili-favlist-classifier&Date)
 ## **许可证**  
 
 本项目遵循 **GPL-3.0** 开源协议。  
