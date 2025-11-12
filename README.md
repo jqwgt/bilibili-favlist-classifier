@@ -30,8 +30,8 @@ Tampermonkey 脚本：按“分区/主分区”批量分类收藏夹视频，支
 ## 安装方法与快速开始  
 1. 安装 Tampermonkey：访问 [Tampermonkey 官网](https://www.tampermonkey.net/) 安装浏览器扩展。  
 2. 获取脚本：
-   - GitHub 原始脚本：[点此](https://github.com/jqwgt/bilibili-favlist-classifier/blob/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js)
-   - 或 Greasyfork 安装页（如已发布）。  
+   - GitHub 原始脚本：[点此查看](https://github.com/jqwgt/bilibili-favlist-classifier/blob/main/%E6%94%B6%E8%97%8F%E5%88%86%E7%B1%BB/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js)
+   - Greasyfork 安装页：[点此安装](https://greasyfork.org/zh-CN/scripts/531672-bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB)
 3. 在收藏夹页面 `https://space.bilibili.com/你的UID/favlist` 右下角点击“按分区分类”开始。  
 4. 按截图依次完成【开始前的设置 → 读取完成下一步 → 预览导出 → 分类操作】。  
 5. 分类完成后刷新页面核对结果；建议先备份再批量移动。  
