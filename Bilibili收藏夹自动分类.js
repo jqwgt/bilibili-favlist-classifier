@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Bilibili收藏夹自动分类
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  B站收藏夹视频自动分类
 // @author       https://space.bilibili.com/1937042029,https://github.com/jqwgt
 // @license      GPL-3.0-or-later
 // @match        *://space.bilibili.com/*/favlist*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
+// @grant        GM_download
 // @connect      api.bilibili.com
 // @downloadURL https://update.greasyfork.org/scripts/531672/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.user.js
 // @updateURL https://update.greasyfork.org/scripts/531672/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.meta.js
@@ -1665,7 +1666,7 @@
         });
 
         modal.querySelector('#export-download').addEventListener('click', () => {
-            downloadTextFile(`bilibili-fav-${Date.now()}.csv`, csvText, 'text/csv;charset=utf-8;');
+            downloadTextFile(`bilibili-fav-${Date.now()}.csv`, csvText, 'text/csv;charset=utf-8');
         });
 
         return new Promise((resolve, reject) => {
@@ -1746,17 +1747,18 @@
         }
     }
 
-    function downloadTextFile(filename, content, mime = 'text/plain;charset=utf-8;') {
+    function downloadTextFile(filename, content, mime = 'text/plain;charset=utf-8') {
+        const safeMime = (mime || 'text/plain;charset=utf-8').replace(/;$/, '');
+        const dataUrl = `data:${safeMime},${encodeURIComponent(content)}`;
+
         if (typeof GM_download === 'function') {
             try {
-                const blobUrl = URL.createObjectURL(new Blob([content], { type: mime }));
                 GM_download({
-                    url: blobUrl,
+                    url: dataUrl,
                     name: filename,
                     saveAs: true,
                     ontimeout: () => log('下载超时', 'error'),
-                    onerror: err => log(`下载失败：${err?.error || err}`, 'error'),
-                    onload: () => URL.revokeObjectURL(blobUrl)
+                    onerror: err => log(`下载失败：${err?.error || err}`, 'error')
                 });
                 return;
             } catch (error) {
@@ -1765,15 +1767,17 @@
         }
 
         try {
-            const blob = new Blob([content], { type: mime });
+            const blob = new Blob([content], { type: safeMime });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = filename;
+            a.rel = 'noopener noreferrer';
+            a.style.display = 'none';
             document.body.appendChild(a);
-            a.click();
+            a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            setTimeout(() => URL.revokeObjectURL(url), 0);
         } catch (error) {
             log(`浏览器下载失败：${error.message}`, 'error');
             alert('下载功能暂不可用，请使用复制按钮导出数据。');
@@ -1855,12 +1859,16 @@
         return groups;
     }
 
-    async function ensureUniqueFolderName(baseName) {
-        let name = baseName?.trim() || '未命名分区';
-        const folders = await getUserFavLists();
+    async function ensureUniqueFolderName(baseName, foldersCache) {
+        const base = baseName?.trim() || '未命名分区';
+        const folders = foldersCache || await getUserFavLists();
+        if (!Array.isArray(folders) || folders.length === 0) {
+            return base;
+        }
+        let name = base;
         let counter = 1;
         while (folders.some(folder => folder.title === name)) {
-            name = `${baseName}_${counter++}`;
+            name = `${base}_${counter++}`;
         }
         return name;
     }
@@ -1876,10 +1884,20 @@
     }
 
     async function ensureTargetFolder(groupConfig) {
+        const folders = await getUserFavLists();
         if (groupConfig.isExisting && groupConfig.fid) {
             return groupConfig.fid;
         }
-        const uniqueName = await ensureUniqueFolderName(groupConfig.name);
+
+        const desiredName = groupConfig.name?.trim();
+        if (desiredName) {
+            const existed = (folders || []).find(folder => folder.title === desiredName);
+            if (existed) {
+                return existed.id;
+            }
+        }
+
+        const uniqueName = await ensureUniqueFolderName(desiredName, folders);
         return await createFolder(uniqueName);
     }
 
