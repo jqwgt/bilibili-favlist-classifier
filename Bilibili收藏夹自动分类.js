@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Bilibili收藏夹自动分类
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  B站收藏夹视频自动分类
+// @version      2.2
+// @description  B站收藏夹视频自动分类（按 tid_v2 分区）
 // @author       https://space.bilibili.com/1937042029,https://github.com/jqwgt
 // @license      GPL-3.0-or-later
 // @match        *://space.bilibili.com/*/favlist*
@@ -10,8 +10,9 @@
 // @grant        GM_addStyle
 // @grant        GM_download
 // @connect      api.bilibili.com
-// @downloadURL https://update.greasyfork.org/scripts/531672/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.user.js
-// @updateURL https://update.greasyfork.org/scripts/531672/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.meta.js
+// @connect      raw.githubusercontent.com
+// @downloadURL  https://github.com/jqwgt/bilibili-favlist-classifier/raw/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js
+// @updateURL    https://github.com/jqwgt/bilibili-favlist-classifier/raw/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js
 // ==/UserScript==
 
 (function() {
@@ -75,53 +76,135 @@
         };
     })();
 
+    // tid_v2 分区映射（来源：SocialSisterYi/bilibili-API-collect docs/video/video_zone_v2.md）
+    // 说明：B 站部分接口已不再返回可用的 tname，但会返回 tid_v2；因此用该文档构建 tid_v2 -> 分区名/主分区 映射。
+    const zoneV2 = (() => {
+        const MAP_KEY = 'bfc_zone_v2_map_v1';
+        const TS_KEY = 'bfc_zone_v2_map_ts_v1';
+        const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+        const RAW_URL = 'https://raw.githubusercontent.com/SocialSisterYi/bilibili-API-collect/master/docs/video/video_zone_v2.md';
+        let store = null;
+
+        function safeParseJSON(text) {
+            try { return JSON.parse(text); } catch (e) { return null; }
+        }
+
+        function loadCached() {
+            if (store) return store;
+            const raw = localStorage.getItem(MAP_KEY);
+            const ts = Number(localStorage.getItem(TS_KEY) || 0);
+            const obj = raw ? safeParseJSON(raw) : null;
+            if (obj && obj.byTidV2 && typeof obj.byTidV2 === 'object') {
+                store = { ...obj, _ts: ts };
+                return store;
+            }
+            store = { byTidV2: {}, _ts: 0 };
+            return store;
+        }
+
+        function saveCached(obj) {
+            try {
+                localStorage.setItem(MAP_KEY, JSON.stringify(obj));
+                localStorage.setItem(TS_KEY, String(Date.now()));
+            } catch (e) { /* ignore */ }
+        }
+
+        function parseMarkdown(md) {
+            const byTidV2 = {};
+            let currentSection = '';
+            let currentMainName = '';
+            let currentMainTidV2 = null;
+
+            const lines = String(md || '').split(/\r?\n/);
+            for (const line of lines) {
+                const h = line.match(/^##\s+(.+?)\s*$/);
+                if (h) {
+                    currentSection = (h[1] || '').trim();
+                    currentMainName = '';
+                    currentMainTidV2 = null;
+                    continue;
+                }
+                if (!line.startsWith('|')) continue;
+                if (line.includes('---')) continue;
+
+                const cols = line.split('|').slice(1, -1).map(s => s.trim());
+                if (cols.length < 3) continue;
+
+                const rawName = cols[0] || '';
+                const tidV2Str = cols[2] || '';
+                if (!/^\d+$/.test(tidV2Str)) continue;
+                const tidV2 = Number(tidV2Str);
+
+                const isMain = /\(主分区\)/.test(rawName);
+                const cleanName = rawName.replace(/\s*\(主分区\)\s*/g, '').trim();
+                if (isMain) {
+                    currentMainName = cleanName || currentSection || '';
+                    currentMainTidV2 = tidV2;
+                }
+
+                const mainName = currentMainName || (isMain ? cleanName : '') || currentSection || '';
+                const mainTidV2 = currentMainTidV2 || (isMain ? tidV2 : null) || tidV2;
+
+                byTidV2[tidV2] = {
+                    tidV2,
+                    name: cleanName,
+                    mainName,
+                    mainTidV2,
+                    section: currentSection
+                };
+            }
+            return { byTidV2 };
+        }
+
+        function fetchText(url) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    responseType: 'text',
+                    onload: (resp) => {
+                        const text = resp?.responseText;
+                        if (typeof text === 'string' && text.length) resolve(text);
+                        else reject(new Error('分区映射下载失败'));
+                    },
+                    onerror: (err) => reject(err instanceof Error ? err : new Error('分区映射下载失败'))
+                });
+            });
+        }
+
+        async function ensureReady({ force = false } = {}) {
+            const cached = loadCached();
+            const ageOk = cached._ts && (Date.now() - cached._ts) < MAX_AGE_MS;
+            const hasData = cached.byTidV2 && Object.keys(cached.byTidV2).length > 10;
+            if (!force && hasData && ageOk) return;
+
+            try {
+                const md = await fetchText(RAW_URL);
+                const parsed = parseMarkdown(md);
+                store = { ...parsed, _ts: Date.now() };
+                saveCached(parsed);
+                log(`[tid_v2] 已更新分区映射：${Object.keys(parsed.byTidV2).length} 条`, 'info');
+            } catch (e) {
+                // 失败时继续使用缓存（若缓存为空，则后续按未知分区处理）
+                const msg = e?.message || String(e);
+                log(`[tid_v2] 分区映射更新失败，将使用缓存：${msg}`, 'error');
+            }
+        }
+
+        function get(tidV2) {
+            const s = loadCached();
+            const key = typeof tidV2 === 'number' ? tidV2 : Number(tidV2);
+            if (!Number.isFinite(key)) return null;
+            return s.byTidV2?.[key] || null;
+        }
+
+        return { ensureReady, get };
+    })();
+
     function randomSleep(minMs = 80, maxMs = 200) {
         const span = Math.max(0, maxMs - minMs);
         const wait = minMs + Math.floor(Math.random() * (span + 1));
         return sleep(wait);
-    }
-
-    // 主分区映射（参考 SocialSisterYi/bilibili-API-collect video_zone_v2 文档主分区概念，非完整表；未命中则回退原分区）
-    // 选择 v2 的原因：v2 是当前较新的结构调整版本，新增“计算机技术”、“科工机械”等更细分标签，需要统一并入“科技”主分区
-    const MAIN_ZONE_SET = new Set([
-        '动画','番剧','国创','音乐','舞蹈','游戏','知识','科技','数码','生活','美食','汽车','动物圈','运动','时尚','娱乐','影视','纪录片','电影','电视剧','鬼畜','资讯','直播'
-    ]);
-    const SUB_TO_MAIN_BY_NAME = {
-        // 动画/番剧/国创
-        'MAD·AMV': '动画','MMD·3D': '动画','短片·手书·配音': '动画','综合': '动画','动画资讯': '动画','布袋戏': '国创','特摄': '动画','国产动画': '国创','欧美动画': '动画',
-        // 音乐
-        '原创音乐': '音乐','翻唱': '音乐','VOCALOID·UTAU': '音乐','演奏': '音乐','MV': '音乐','音乐现场': '音乐','音乐综合': '音乐','音乐教学': '音乐','音乐资讯': '音乐',
-        // 舞蹈
-        '宅舞': '舞蹈','街舞': '舞蹈','舞蹈综合': '舞蹈','舞蹈教程': '舞蹈',
-        // 游戏
-        '单机游戏': '游戏','电子竞技': '游戏','手机游戏': '游戏','网络游戏': '游戏','桌游棋牌': '游戏','GMV': '游戏','音游': '游戏','Mugen': '游戏','游戏知识': '游戏','游戏赛事': '游戏',
-        // 科技/知识/数码
-        '科学': '知识','社科·法律·心理': '知识','校园学习': '知识','职业职场': '知识','人文历史': '知识','设计·创意': '知识','财经商业': '知识','运动科普': '知识','汽车知识': '知识',
-        '极客DIY': '科技','机械': '科技','软件应用': '科技','野生技术协会': '科技',
-        '手机平板': '数码','电脑装机': '数码','摄影摄像': '数码','影音智能': '数码',
-    // 计算机技术 & 科工机械（v2 新出现子类，统一到“科技”）
-    '计算机技术': '科技','科工机械': '科技','科学科普': '科技','工程': '科技','电子产品': '科技','编程': '科技','人工智能': '科技','AI': '科技',
-        // 生活/美食/动物圈/汽车/运动/时尚/娱乐
-        '搞笑': '生活','日常': '生活','手工': '生活','绘画': '生活','户外': '生活','其他': '生活',
-        '美食制作': '美食','美食侦探': '美食','美食测评': '美食','田园美食': '美食',
-        '喵星人': '动物圈','汪星人': '动物圈','大熊猫': '动物圈','野生动物': '动物圈','动物综合': '动物圈',
-        '赛车': '汽车','改装': '汽车','新能源车': '汽车','汽车生活': '汽车','摩托': '汽车',
-        '篮球': '运动','足球': '运动','羽毛球': '运动','乒乓球': '运动','健身': '运动',
-        '美妆': '时尚','服饰': '时尚','T台': '时尚','风尚标': '时尚',
-        '综艺': '娱乐','明星': '娱乐','娱乐圈': '娱乐','演出': '娱乐',
-        // 影视
-        '影视杂谈': '影视','影视剪辑': '影视','预告': '影视','影视混剪': '影视','影视评测': '影视',
-        // 鬼畜
-        '鬼畜调教': '鬼畜','音MAD': '鬼畜','人力VOCALOID': '鬼畜','教程演示': '鬼畜',
-        // 纪录片/电影/电视剧
-        '人文·历史': '纪录片','科学·探索·自然': '纪录片','军事': '纪录片'
-    };
-
-    function getMainZoneName(tname) {
-        if (!tname) return null;
-        if (MAIN_ZONE_SET.has(tname)) return tname; // 已是主分区
-        const mapped = SUB_TO_MAIN_BY_NAME[tname];
-        return mapped || null;
     }
 
     function assignClassificationFields(videos) {
@@ -130,22 +213,39 @@
         let beforeDistinct = new Set();
         let afterDistinct = new Set();
         videos.forEach(v => {
-            const name = v?.tname || '';
-            if (name) beforeDistinct.add(name);
-            if (useMain) {
-                const main = getMainZoneName(name) || (name && MAIN_ZONE_SET.has(name) ? name : null);
-                if (main) {
-                    v.classTname = main;
-                    v.classTid = `M:${main}`;
-                } else {
-                    v.classTname = name || '未知分区';
-                    v.classTid = v.tid != null ? String(v.tid) : 'unknown';
-                }
-            } else {
-                v.classTname = name || '未知分区';
-                v.classTid = v.tid != null ? String(v.tid) : 'unknown';
+            const tidV2 = v?.tid_v2 ?? v?.tidv2 ?? null;
+            const zone = tidV2 != null ? zoneV2.get(tidV2) : null;
+
+            const subName = (zone?.name || v?.tname_v2 || v?.tname || '').trim();
+            const mainName = (zone?.mainName || '').trim();
+            const mainTidV2 = zone?.mainTidV2 ?? null;
+
+            // 兼容后续逻辑：把“显示用分区”写回 tname，把“分组用 id”写回 tid
+            if (subName) {
+                v.tname_v2 = subName;
+                v.tname = subName;
             }
-            afterDistinct.add(v.classTname || v.tname || '未知分区');
+            if (tidV2 != null) {
+                v.tid_v2 = Number(tidV2);
+                v.tid = Number(tidV2);
+            }
+            if (mainName) {
+                v.main_tname_v2 = mainName;
+                if (mainTidV2 != null) v.main_tid_v2 = Number(mainTidV2);
+            }
+
+            const baseName = subName || '未知分区';
+            beforeDistinct.add(baseName);
+
+            if (useMain) {
+                const displayMain = mainName || baseName;
+                v.classTname = displayMain || '未知分区';
+                v.classTid = mainTidV2 != null ? String(mainTidV2) : (tidV2 != null ? String(tidV2) : (v.tid != null ? String(v.tid) : 'unknown'));
+            } else {
+                v.classTname = baseName;
+                v.classTid = tidV2 != null ? String(tidV2) : (v.tid != null ? String(v.tid) : 'unknown');
+            }
+            afterDistinct.add(v.classTname || baseName);
         });
         try {
             if (useMain) {
@@ -811,7 +911,7 @@
         state.data.baseVideos = [];
         state.data.totalCount = 0;
         state.data.completed = true;
-        state.data.readStats = { pages: 0, items: 0, tidKnown: 0, tnameKnown: 0, upKnown: 0, sampleKeys: [] };
+        state.data.readStats = { pages: 0, items: 0, tidKnown: 0, tnameKnown: 0, tidV2Known: 0, tnameV2Known: 0, upKnown: 0, sampleKeys: [] };
 
         const controller = getController('reading');
         let pn = 1;
@@ -866,6 +966,8 @@
                     title: media.title,
                     tid: media.tid ?? null,
                     tname: media.tname || '',
+                    tid_v2: media.tid_v2 ?? media.tidv2 ?? null,
+                    tname_v2: media.tname_v2 ?? media.tnamev2 ?? '',
                     upName: media.upper?.name || media.upper?.uname || '',
                     upMid: media.upper?.mid || media.upper?.uid || '',
                     cover: media.cover,
@@ -876,6 +978,8 @@
                 });
                 if (media.tid != null) state.data.readStats.tidKnown += 1;
                 if (media.tname) state.data.readStats.tnameKnown += 1;
+                if (media.tid_v2 != null || media.tidv2 != null) state.data.readStats.tidV2Known += 1;
+                if (media.tname_v2 || media.tnamev2) state.data.readStats.tnameV2Known += 1;
                 if (media.upper?.name || media.upper?.uname) state.data.readStats.upKnown += 1;
             });
 
@@ -929,7 +1033,7 @@
             const s = state.data.readStats;
             if (s) {
                 const ratio = (num, den) => den ? ((num/den*100).toFixed(1)+'%') : '0%';
-                log(`[Debug] 列表接口字段命中率：tid=${s.tidKnown}/${s.items} (${ratio(s.tidKnown,s.items)}), tname=${s.tnameKnown}/${s.items} (${ratio(s.tnameKnown,s.items)}), upperName=${s.upKnown}/${s.items} (${ratio(s.upKnown,s.items)})`, 'info');
+                log(`[Debug] 列表接口字段命中率：tid=${s.tidKnown}/${s.items} (${ratio(s.tidKnown,s.items)}), tname=${s.tnameKnown}/${s.items} (${ratio(s.tnameKnown,s.items)}), tid_v2=${s.tidV2Known}/${s.items} (${ratio(s.tidV2Known,s.items)}), tname_v2=${s.tnameV2Known}/${s.items} (${ratio(s.tnameV2Known,s.items)}), upperName=${s.upKnown}/${s.items} (${ratio(s.upKnown,s.items)})`, 'info');
                 if (s.sampleKeys.length) {
                     log(`[Debug] medias 示例 keys：${s.sampleKeys.join(' | ')}`, 'info');
                 }
@@ -986,7 +1090,7 @@
         removeProgressUI('reading');
         const controller = getController('reading');
 
-        const targets = videos.filter(video => !video.tid || !video.tname || !video.upName);
+        const targets = videos.filter(video => !video.tid_v2 || !video.upName);
         if (!targets.length) return;
 
         // 先尝试缓存命中（忽略无效/占位缓存）
@@ -995,10 +1099,12 @@
             const key = v.bvid || v.aid;
             const cached = key ? videoCache.get(key) : null;
             const badName = (cached?.tname === '未知' || cached?.tname === '未知分区');
-            const validCached = cached && (cached.tid || (cached.tname && !badName) || cached.upName);
+            const validCached = cached && (cached.tid_v2 || cached.tid || (cached.tname && !badName) || cached.upName);
             if (validCached) {
                 v.tid = v.tid ?? cached.tid ?? null;
                 v.tname = v.tname || cached.tname || '';
+                v.tid_v2 = v.tid_v2 ?? cached.tid_v2 ?? null;
+                v.tname_v2 = v.tname_v2 || cached.tname_v2 || '';
                 v.upName = v.upName || cached.upName || '';
                 v.upMid = v.upMid || cached.upMid || '';
                 if (!v.bvid && cached.bvid) v.bvid = cached.bvid;
@@ -1026,10 +1132,12 @@
                 const ck = video.bvid || video.aid;
                 const cached = ck ? videoCache.get(ck) : null;
                 const badName2 = (cached?.tname === '未知' || cached?.tname === '未知分区');
-                if (!cached || ((!cached.tid && (!cached.tname || badName2)))) {
+                if (!cached || ((!cached.tid_v2 && !cached.tid && (!cached.tname || badName2)))) {
                     const info = await getVideoInfo(video.aid);
                     video.tid = info.tid;
                     video.tname = info.tname;
+                    video.tid_v2 = info.tid_v2 ?? info.tidv2 ?? null;
+                    video.tname_v2 = info.tname_v2 ?? info.tnamev2 ?? '';
                     video.upName = info.owner?.name || video.upName || '';
                     video.upMid = info.owner?.mid || video.upMid || '';
                     video.bvid = info.bvid || video.bvid;
@@ -1037,10 +1145,12 @@
                     video.pubdate = info.pubdate;
                     video.stat = info.stat;
                     // 写入缓存（用 bvid 和 aid 两个键都写一份，提升命中率）
-                    if (video.tid && video.tname) {
+                    if ((video.tid_v2 || video.tid) && (video.tname_v2 || video.tname || video.upName)) {
                         const cacheValue = {
                             tid: video.tid,
                             tname: video.tname,
+                            tid_v2: video.tid_v2,
+                            tname_v2: video.tname_v2,
                             upName: video.upName,
                             upMid: video.upMid,
                             bvid: video.bvid,
@@ -1052,8 +1162,11 @@
                 } else {
                     // 用缓存填充缺失字段
                     const tn = (cached && (cached.tname === '未知' || cached.tname === '未知分区')) ? '' : (cached?.tname || '');
+                    const tnV2 = (cached && (cached.tname_v2 === '未知' || cached.tname_v2 === '未知分区')) ? '' : (cached?.tname_v2 || '');
                     video.tid = video.tid ?? cached.tid ?? null;
                     video.tname = video.tname || tn;
+                    video.tid_v2 = video.tid_v2 ?? cached.tid_v2 ?? null;
+                    video.tname_v2 = video.tname_v2 || tnV2;
                     video.upName = video.upName || cached.upName || '';
                     video.upMid = video.upMid || cached.upMid || '';
                     if (!video.bvid && cached.bvid) video.bvid = cached.bvid;
@@ -1180,7 +1293,7 @@
                 </label>
                 <label class="bili-classifier-checkbox-label" style="margin-top: 22px">
                     <input type="checkbox" id="setting-skip-detail" ${defaults.skipDetailFetch ? 'checked' : ''}>
-                    仅使用收藏列表信息（跳过详情接口，快速但是不能按照分区分类，适合仅导出不操作）
+                    仅使用收藏列表信息（跳过详情接口：通常拿不到 tid_v2，因此不能按分区分类；适合仅导出不操作）
                 </label>
                 <label class="bili-classifier-checkbox-label" style="margin-top: 22px">
                     <input type="checkbox" id="setting-use-main-zone" ${defaults.useMainZone ? 'checked' : ''}>
@@ -2186,6 +2299,9 @@
             state.sourceFid = sourceFid;
 
             await openInitialSettings(state.settings);
+
+            // 预加载 tid_v2 分区映射（用于把 tid_v2 映射为分区名/主分区）
+            await zoneV2.ensureReady();
             await getUserFavLists(true);
 
             log('开始获取收藏夹视频...');

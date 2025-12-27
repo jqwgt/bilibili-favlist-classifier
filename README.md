@@ -9,7 +9,7 @@ Tampermonkey 脚本：按“分区/主分区”批量分类收藏夹视频，支
 ### 2025-12：按 `tid_v2` 分区修复
 
 - 背景：近期 `x/web-interface/view` 等接口返回的 `tname` 可能为空，但 `tid_v2` 仍能正确反映新版分区（例如 `2030` 对应“颜值·网红舞”）。
-- 方案：新增脚本 [Bilibili收藏夹自动分类_tidv2.js](Bilibili收藏夹自动分类_tidv2.js)，分类逻辑优先使用 `tid_v2`。
+- 方案：主脚本 [Bilibili收藏夹自动分类.js](Bilibili收藏夹自动分类.js) 已升级为 `tid_v2` 方案，文件名保持不变，便于 GreasyFork/GitHub Raw 同步。
 - 映射来源：启动时会拉取并解析 `video_zone_v2.md`（SocialSisterYi/bilibili-API-collect），并做本地缓存（默认 7 天）。
 - 注意：为获取 `tid_v2`，通常需要关闭“仅使用收藏列表信息（跳过详情接口）”。
 
@@ -40,7 +40,7 @@ Tampermonkey 脚本：按“分区/主分区”批量分类收藏夹视频，支
 1. 安装 Tampermonkey：访问 [Tampermonkey 官网](https://www.tampermonkey.net/) 安装浏览器扩展。  
 2. 获取脚本：
    - GitHub 原始脚本：[点此查看](https://github.com/jqwgt/bilibili-favlist-classifier/blob/main/%E6%94%B6%E8%97%8F%E5%88%86%E7%B1%BB/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js)
-  - `tid_v2` 版本（推荐用于新版分区）：[Bilibili收藏夹自动分类_tidv2.js](https://github.com/jqwgt/bilibili-favlist-classifier/blob/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB_tidv2.js)
+  - GitHub Raw（用于 Tampermonkey 自动更新）：https://github.com/jqwgt/bilibili-favlist-classifier/raw/main/Bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB.js
    - Greasyfork 安装页：[点此安装](https://greasyfork.org/zh-CN/scripts/531672-bilibili%E6%94%B6%E8%97%8F%E5%A4%B9%E8%87%AA%E5%8A%A8%E5%88%86%E7%B1%BB)
 3. 在收藏夹页面 `https://space.bilibili.com/你的UID/favlist` 右下角点击“按分区分类”开始。  
 4. 按截图依次完成【开始前的设置 → 读取完成下一步 → 预览导出 → 分类操作】。  
